@@ -15,26 +15,32 @@ let subjectsDB = {
 const ADMIN_PASSWORD = "admin123";
 
 const authAdmin = (req, res, next) => {
-  const password = req.headers['x-admin-password'];
-  if (password!== ADMIN_PASSWORD) {
+  if (req.headers['x-admin-password']!== ADMIN_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
 };
 
-// Root endpoint biar gak 404
 app.get('/', (req, res) => {
-  res.json({ status: 'OK', message: 'Backend ujian jalan' });
+  res.json({ status: 'OK' });
 });
 
-// 1. Init Murid
+// PUBLIC: buat dropdown murid. Hanya tampilkan yg ada formUrl
+app.get('/api/subjects', (req, res) => {
+  const result = {};
+  for (let id in subjectsDB) {
+    if (subjectsDB[id].formUrl) result[id] = subjectsDB[id];
+  }
+  res.json(result);
+});
+
 app.post('/api/init', (req, res) => {
   const { name, email, subject } = req.body;
   if (!email ||!name ||!subject) {
     return res.status(400).json({ error: 'Nama, Email, Mapel wajib diisi' });
   }
-  if (!subjectsDB[subject]) {
-    return res.status(404).json({ error: 'Mapel tidak ditemukan' });
+  if (!subjectsDB[subject] ||!subjectsDB[subject].formUrl) {
+    return res.status(404).json({ error: 'Mapel belum diset oleh admin' });
   }
   if (!studentsDB[email]) {
     studentsDB[email] = {
@@ -52,7 +58,6 @@ app.post('/api/init', (req, res) => {
   });
 });
 
-// 2. Log
 app.post('/api/log', (req, res) => {
   const { email, event, switchCount } = req.body;
   if (studentsDB[email]) {
@@ -68,50 +73,30 @@ app.post('/api/log', (req, res) => {
   res.status(404).json({ error: 'Siswa tidak ditemukan' });
 });
 
-// 3. Status
 app.get('/api/status', (req, res) => {
   const email = req.query.email;
-  if (studentsDB[email]) {
-    return res.json({ blocked: studentsDB[email].blocked });
-  }
-  res.json({ blocked: false });
+  res.json({ blocked: studentsDB[email]?.blocked || false });
 });
 
-// 3.5 PUBLIC: Ambil mapel buat dropdown - INI YANG KURANG
-app.get('/api/subjects', (req, res) => {
-  const result = {};
-  for (let id in subjectsDB) {
-    if (subjectsDB[id].formUrl) result[id] = subjectsDB[id];
-  }
-  res.json(result);
-});
-
-// 4. ADMIN: Lihat siswa
+// ADMIN
 app.get('/admin/students', authAdmin, (req, res) => {
   res.json(Object.values(studentsDB));
 });
 
-// 5. ADMIN: Lihat mapel
 app.get('/admin/subjects', authAdmin, (req, res) => {
   res.json(subjectsDB);
 });
 
-// 6. ADMIN: Tambah mapel
 app.post('/admin/subjects', authAdmin, (req, res) => {
   const { id, name, formUrl } = req.body;
-  if (!id ||!name) {
-    return res.status(400).json({ error: 'ID dan Nama mapel wajib diisi' });
-  }
+  if (!id ||!name) return res.status(400).json({ error: 'ID dan Nama wajib' });
   subjectsDB[id] = { name, formUrl: formUrl || "" };
-  res.json({ success: true, subjects: subjectsDB });
+  res.json({ success: true });
 });
 
-// 7. ADMIN: Hapus siswa
 app.delete('/admin/student/:email', authAdmin, (req, res) => {
   delete studentsDB[req.params.email];
   res.json({ success: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server jalan di port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server jalan di ${PORT}`));
