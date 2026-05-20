@@ -83,6 +83,15 @@ app.get('/api/status', (req, res) => {
   res.json({ blocked: false });
 });
 
+// 3.5 Public: Ambil mapel buat dropdown murid
+app.get('/api/subjects', (req, res) => {
+  const result = {};
+  for (let id in subjectsDB) {
+    if (subjectsDB[id].formUrl) result[id] = subjectsDB[id];
+  }
+  res.json(result);
+});
+
 // 4. ADMIN: Lihat semua siswa
 app.get('/admin/students', authAdmin, (req, res) => {
   res.json(Object.values(studentsDB));
