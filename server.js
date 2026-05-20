@@ -48,10 +48,20 @@ app.get('/api/violations', (req, res) => {
 
 app.post('/api/init', (req, res) => {
   const { name, email, subject } = req.body;
-  if (!email ||!name ||!subject) return res.status(400).json({ error: 'Lengkapi data' });
-  if (!subjectsDB[subject] ||!subjectsDB[subject].formUrl) {
-    return res.status(404).json({ error: 'Mapel belum diset' });
+
+  if (!email ||!name ||!subject) {
+    return res.status(400).json({ error: 'Nama, Email, Mapel wajib diisi' });
   }
+
+  // FIX: Hanya izinkan domain @smpkanisiuskudus.sch.id
+  if (!email.endsWith('@smpkanisiuskudus.sch.id')) {
+    return res.status(403).json({ error: 'Hanya email @smpkanisiuskudus.sch.id yang diizinkan' });
+  }
+
+  if (!subjectsDB[subject] ||!subjectsDB[subject].formUrl) {
+    return res.status(404).json({ error: 'Mapel belum diset oleh admin' });
+  }
+
   if (!studentsDB[email]) {
     studentsDB[email] = {
       name, email, subject,
@@ -61,6 +71,7 @@ app.post('/api/init', (req, res) => {
       startTime: new Date()
     };
   }
+
   res.json({
     totalPoint: studentsDB[email].totalPoint,
     blocked: studentsDB[email].blocked,
