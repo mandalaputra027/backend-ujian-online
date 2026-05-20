@@ -12,6 +12,15 @@ let subjectsDB = {
   "ipa": { name: "IPA", formUrl: "" },
   "bing": { name: "Bahasa Inggris", formUrl: "" }
 };
+
+// Jenis pelanggaran default. Admin bisa tambah/edit
+let violationTypes = {
+  "TAB_SWITCH": { name: "Pindah Tab", point: 1, autoBlock: 5 },
+  "COPY_PASTE": { name: "Copy Paste", point: 2, autoBlock: 3 },
+  "RIGHT_CLICK": { name: "Klik Kanan", point: 1, autoBlock: 5 },
+  "DEVTOOLS": { name: "Buka DevTools", point: 3, autoBlock: 2 }
+};
+
 const ADMIN_PASSWORD = "admin123";
 
 const authAdmin = (req, res, next) => {
@@ -21,11 +30,9 @@ const authAdmin = (req, res, next) => {
   next();
 };
 
-app.get('/', (req, res) => {
-  res.json({ status: 'OK' });
-});
+app.get('/', (req, res) => res.json({ status: 'OK' }));
 
-// PUBLIC: buat dropdown murid. Hanya tampilkan yg ada formUrl
+// PUBLIC
 app.get('/api/subjects', (req, res) => {
   const result = {};
   for (let id in subjectsDB) {
@@ -34,43 +41,61 @@ app.get('/api/subjects', (req, res) => {
   res.json(result);
 });
 
+// PUBLIC: kirim jenis pelanggaran ke frontend
+app.get('/api/violations', (req, res) => {
+  res.json(violationTypes);
+});
+
 app.post('/api/init', (req, res) => {
   const { name, email, subject } = req.body;
-  if (!email ||!name ||!subject) {
-    return res.status(400).json({ error: 'Nama, Email, Mapel wajib diisi' });
-  }
+  if (!email ||!name ||!subject) return res.status(400).json({ error: 'Lengkapi data' });
   if (!subjectsDB[subject] ||!subjectsDB[subject].formUrl) {
-    return res.status(404).json({ error: 'Mapel belum diset oleh admin' });
+    return res.status(404).json({ error: 'Mapel belum diset' });
   }
   if (!studentsDB[email]) {
     studentsDB[email] = {
       name, email, subject,
-      switchCount: 0,
+      totalPoint: 0,
       blocked: false,
       logs: [],
       startTime: new Date()
     };
   }
   res.json({
-    switchCount: studentsDB[email].switchCount,
+    totalPoint: studentsDB[email].totalPoint,
     blocked: studentsDB[email].blocked,
     formUrl: subjectsDB[subject].formUrl
   });
 });
 
+// FIX: Log pake jenis pelanggaran
 app.post('/api/log', (req, res) => {
-  const { email, event, switchCount } = req.body;
-  if (studentsDB[email]) {
-    studentsDB[email].switchCount = switchCount;
-    studentsDB[email].logs.push({
-      timestamp: new Date().toISOString(),
-      event,
-      currentSwitchCount: switchCount
-    });
-    if (switchCount >= 5) studentsDB[email].blocked = true;
-    return res.json({ success: true, blocked: studentsDB[email].blocked });
+  const { email, violationId } = req.body; // ganti switchCount jadi violationId
+  const violation = violationTypes[violationId];
+
+  if (!studentsDB[email]) return res.status(404).json({ error: 'Siswa tidak ditemukan' });
+  if (!violation) return res.status(400).json({ error: 'Jenis pelanggaran tidak valid' });
+
+  studentsDB[email].totalPoint += violation.point;
+  studentsDB[email].logs.push({
+    timestamp: new Date().toISOString(),
+    violationId,
+    violationName: violation.name,
+    point: violation.point,
+    totalPoint: studentsDB[email].totalPoint
+  });
+
+  // Auto blokir berdasarkan jenis pelanggaran
+  const countViolation = studentsDB[email].logs.filter(l => l.violationId === violationId).length;
+  if (countViolation >= violation.autoBlock) {
+    studentsDB[email].blocked = true;
   }
-  res.status(404).json({ error: 'Siswa tidak ditemukan' });
+
+  return res.json({
+    success: true,
+    blocked: studentsDB[email].blocked,
+    totalPoint: studentsDB[email].totalPoint
+  });
 });
 
 app.get('/api/status', (req, res) => {
@@ -78,14 +103,18 @@ app.get('/api/status', (req, res) => {
   res.json({ blocked: studentsDB[email]?.blocked || false });
 });
 
-// ADMIN
+// ADMIN: Siswa
 app.get('/admin/students', authAdmin, (req, res) => {
   res.json(Object.values(studentsDB));
 });
 
-app.get('/admin/subjects', authAdmin, (req, res) => {
-  res.json(subjectsDB);
+app.delete('/admin/student/:email', authAdmin, (req, res) => {
+  delete studentsDB[req.params.email];
+  res.json({ success: true });
 });
+
+// ADMIN: Mapel
+app.get('/admin/subjects', authAdmin, (req, res) => res.json(subjectsDB));
 
 app.post('/admin/subjects', authAdmin, (req, res) => {
   const { id, name, formUrl } = req.body;
@@ -94,8 +123,24 @@ app.post('/admin/subjects', authAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-app.delete('/admin/student/:email', authAdmin, (req, res) => {
-  delete studentsDB[req.params.email];
+// ADMIN: Jenis Pelanggaran
+app.get('/admin/violations', authAdmin, (req, res) => {
+  res.json(violationTypes);
+});
+
+app.post('/admin/violations', authAdmin, (req, res) => {
+  const { id, name, point, autoBlock } = req.body;
+  if (!id ||!name) return res.status(400).json({ error: 'ID dan Nama wajib' });
+  violationTypes[id] = {
+    name,
+    point: parseInt(point) || 1,
+    autoBlock: parseInt(autoBlock) || 5
+  };
+  res.json({ success: true });
+});
+
+app.delete('/admin/violation/:id', authAdmin, (req, res) => {
+  delete violationTypes[req.params.id];
   res.json({ success: true });
 });
 
