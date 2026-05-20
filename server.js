@@ -6,16 +6,14 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Database RAM
 let studentsDB = {};
 let subjectsDB = {
   "mtk": { name: "Matematika", formUrl: "" },
   "ipa": { name: "IPA", formUrl: "" },
   "bing": { name: "Bahasa Inggris", formUrl: "" }
 };
-const ADMIN_PASSWORD = "admin123"; // Ganti ini!
+const ADMIN_PASSWORD = "admin123";
 
-// Middleware cek admin
 const authAdmin = (req, res, next) => {
   const password = req.headers['x-admin-password'];
   if (password!== ADMIN_PASSWORD) {
@@ -24,17 +22,20 @@ const authAdmin = (req, res, next) => {
   next();
 };
 
-// 1. Login Murid
+// Root endpoint biar gak 404
+app.get('/', (req, res) => {
+  res.json({ status: 'OK', message: 'Backend ujian jalan' });
+});
+
+// 1. Init Murid
 app.post('/api/init', (req, res) => {
   const { name, email, subject } = req.body;
   if (!email ||!name ||!subject) {
     return res.status(400).json({ error: 'Nama, Email, Mapel wajib diisi' });
   }
-
   if (!subjectsDB[subject]) {
     return res.status(404).json({ error: 'Mapel tidak ditemukan' });
   }
-
   if (!studentsDB[email]) {
     studentsDB[email] = {
       name, email, subject,
@@ -44,7 +45,6 @@ app.post('/api/init', (req, res) => {
       startTime: new Date()
     };
   }
-
   res.json({
     switchCount: studentsDB[email].switchCount,
     blocked: studentsDB[email].blocked,
@@ -52,10 +52,9 @@ app.post('/api/init', (req, res) => {
   });
 });
 
-// 2. Log kecurangan
+// 2. Log
 app.post('/api/log', (req, res) => {
   const { email, event, switchCount } = req.body;
-
   if (studentsDB[email]) {
     studentsDB[email].switchCount = switchCount;
     studentsDB[email].logs.push({
@@ -63,18 +62,13 @@ app.post('/api/log', (req, res) => {
       event,
       currentSwitchCount: switchCount
     });
-
-    if (switchCount >= 5) {
-      studentsDB[email].blocked = true;
-    }
-
+    if (switchCount >= 5) studentsDB[email].blocked = true;
     return res.json({ success: true, blocked: studentsDB[email].blocked });
   }
-
   res.status(404).json({ error: 'Siswa tidak ditemukan' });
 });
 
-// 3. Cek status blokir
+// 3. Status
 app.get('/api/status', (req, res) => {
   const email = req.query.email;
   if (studentsDB[email]) {
@@ -83,7 +77,7 @@ app.get('/api/status', (req, res) => {
   res.json({ blocked: false });
 });
 
-// 3.5 Public: Ambil mapel buat dropdown murid
+// 3.5 PUBLIC: Ambil mapel buat dropdown - INI YANG KURANG
 app.get('/api/subjects', (req, res) => {
   const result = {};
   for (let id in subjectsDB) {
@@ -92,23 +86,22 @@ app.get('/api/subjects', (req, res) => {
   res.json(result);
 });
 
-// 4. ADMIN: Lihat semua siswa
+// 4. ADMIN: Lihat siswa
 app.get('/admin/students', authAdmin, (req, res) => {
   res.json(Object.values(studentsDB));
 });
 
-// 5. ADMIN: Lihat semua mapel
+// 5. ADMIN: Lihat mapel
 app.get('/admin/subjects', authAdmin, (req, res) => {
   res.json(subjectsDB);
 });
 
-// 6. ADMIN: Tambah/Edit mapel + link form
+// 6. ADMIN: Tambah mapel
 app.post('/admin/subjects', authAdmin, (req, res) => {
   const { id, name, formUrl } = req.body;
   if (!id ||!name) {
     return res.status(400).json({ error: 'ID dan Nama mapel wajib diisi' });
   }
-
   subjectsDB[id] = { name, formUrl: formUrl || "" };
   res.json({ success: true, subjects: subjectsDB });
 });
@@ -121,5 +114,4 @@ app.delete('/admin/student/:email', authAdmin, (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Server jalan di port ${PORT}`);
-  console.log(`🔑 Password admin: ${ADMIN_PASSWORD}`);
 });
