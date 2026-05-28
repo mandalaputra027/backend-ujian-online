@@ -21,6 +21,7 @@ let violationTypes = {
   "DEVTOOLS": { name: "Buka DevTools", point: 3, autoBlock: 2 },
   "SPLIT_SCREEN": {"name": "Split Screen Terdeteksi", "point": 10},
   "DEVTOOLS_OPEN": {"name": "DevTools Terbuka", "point": 15},
+  "EXIT_FULLSCREEN": {"name": "Keluar Fullscreen", "point": 10}
 };
 
 const ADMIN_PASSWORD = "admin123";
