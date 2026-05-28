@@ -18,7 +18,9 @@ let violationTypes = {
   "TAB_SWITCH": { name: "Pindah Tab", point: 1, autoBlock: 5 },
   "COPY_PASTE": { name: "Copy Paste", point: 2, autoBlock: 3 },
   "RIGHT_CLICK": { name: "Klik Kanan", point: 1, autoBlock: 5 },
-  "DEVTOOLS": { name: "Buka DevTools", point: 3, autoBlock: 2 }
+  "DEVTOOLS": { name: "Buka DevTools", point: 3, autoBlock: 2 },
+  "SPLIT_SCREEN": {"name": "Split Screen Terdeteksi", "point": 10},
+  "DEVTOOLS_OPEN": {"name": "DevTools Terbuka", "point": 15},
 };
 
 const ADMIN_PASSWORD = "admin123";
