@@ -1,161 +1,263 @@
-const express = require('express');
-const cors = require('cors');
-const app = express();
+"use strict";
+
+const express = require("express");
+const cors    = require("cors");
+
+const app  = express();
 const PORT = process.env.PORT || 3000;
 
+/* ═══════════════════════════════════════════════
+   MIDDLEWARE
+═══════════════════════════════════════════════ */
 app.use(cors());
 app.use(express.json());
 
-let studentsDB = {};
-let subjectsDB = {
-  "mtk": { name: "Matematika", formUrl: "" },
-  "ipa": { name: "IPA", formUrl: "" },
-  "bing": { name: "Bahasa Inggris", formUrl: "" }
+/* ═══════════════════════════════════════════════
+   IN-MEMORY STORE
+   (Ganti dengan database jika butuh persistence)
+═══════════════════════════════════════════════ */
+
+// { [subjectId]: { name: string, formUrl: string } }
+const subjects = {};
+
+// { [violationId]: { name: string, point: number, autoBlock: number } }
+const violations = {
+  TAB_SWITCH:      { name: "Pindah Tab",         point: 5,  autoBlock: 20 },
+  COPY_PASTE:      { name: "Copy/Paste",          point: 5,  autoBlock: 20 },
+  RIGHT_CLICK:     { name: "Klik Kanan",          point: 2,  autoBlock: 20 },
+  FULLSCREEN_EXIT: { name: "Keluar Layar Penuh",  point: 3,  autoBlock: 20 },
 };
 
-// Jenis pelanggaran default. Admin bisa tambah/edit
-let violationTypes = {
-  "TAB_SWITCH": { name: "Pindah Tab", point: 1, autoBlock: 5 },
-  "COPY_PASTE": { name: "Copy Paste", point: 2, autoBlock: 3 },
-  "RIGHT_CLICK": { name: "Klik Kanan", point: 1, autoBlock: 5 },
-  "DEVTOOLS": { name: "Buka DevTools", point: 3, autoBlock: 2 },
-  "SPLIT_SCREEN": {"name": "Split Screen Terdeteksi", "point": 10},
-  "DEVTOOLS_OPEN": {"name": "DevTools Terbuka", "point": 15},
-  "EXIT_FULLSCREEN": {"name": "Keluar Fullscreen", "point": 10}
-};
+// { [email]: { name, email, subject, totalPoint, blocked, logs: [{violationId, violationName, point, time}] } }
+const students = {};
 
-const ADMIN_PASSWORD = "admin123";
+/* ═══════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════ */
+function getStudent(email) {
+  return students[email] ?? null;
+}
 
-const authAdmin = (req, res, next) => {
-  if (req.headers['x-admin-password']!== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Unauthorized' });
+function adminAuth(req, res, next) {
+  const password = req.headers["x-admin-password"];
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+  if (!password || password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
   next();
-};
+}
 
-app.get('/', (req, res) => res.json({ status: 'OK' }));
+/* ═══════════════════════════════════════════════
+   PUBLIC ENDPOINTS  (dipakai halaman ujian siswa)
+═══════════════════════════════════════════════ */
 
-// PUBLIC
-app.get('/api/subjects', (req, res) => {
+// GET /api/subjects
+// Kembalikan hanya mapel yang punya formUrl (untuk dropdown siswa)
+app.get("/api/subjects", (req, res) => {
   const result = {};
-  for (let id in subjectsDB) {
-    if (subjectsDB[id].formUrl) result[id] = subjectsDB[id];
+  for (const [id, s] of Object.entries(subjects)) {
+    if (s.formUrl && s.formUrl.trim()) {
+      result[id] = { name: s.name };
+    }
   }
   res.json(result);
 });
 
-// PUBLIC: kirim jenis pelanggaran ke frontend
-app.get('/api/violations', (req, res) => {
-  res.json(violationTypes);
+// GET /api/violations
+// Kembalikan konfigurasi jenis pelanggaran (untuk frontend anti-cheat)
+app.get("/api/violations", (req, res) => {
+  res.json(violations);
 });
 
-app.post('/api/init', (req, res) => {
+// POST /api/init
+// Inisialisasi sesi ujian siswa
+app.post("/api/init", (req, res) => {
   const { name, email, subject } = req.body;
 
-  if (!email ||!name ||!subject) {
-    return res.status(400).json({ error: 'Nama, Email, Mapel wajib diisi' });
+  if (!name || !email || !subject) {
+    return res.status(400).json({ error: "name, email, dan subject wajib diisi." });
+  }
+  if (!email.endsWith("@smpkanisiuskudus.sch.id")) {
+    return res.status(400).json({ error: "Gunakan email sekolah @smpkanisiuskudus.sch.id" });
+  }
+  if (!subjects[subject]) {
+    return res.status(400).json({ error: "Mapel tidak ditemukan." });
+  }
+  if (!subjects[subject].formUrl) {
+    return res.status(400).json({ error: "Link form untuk mapel ini belum tersedia." });
   }
 
-  // FIX: Hanya izinkan domain @smpkanisiuskudus.sch.id
-  if (!email.endsWith('@smpkanisiuskudus.sch.id')) {
-    return res.status(403).json({ error: 'Hanya email @smpkanisiuskudus.sch.id yang diizinkan' });
+  // Cek apakah sudah diblokir sebelumnya
+  const existing = students[email];
+  if (existing && existing.blocked) {
+    return res.json({ blocked: true, totalPoint: existing.totalPoint });
   }
 
-  if (!subjectsDB[subject] ||!subjectsDB[subject].formUrl) {
-    return res.status(404).json({ error: 'Mapel belum diset oleh admin' });
+  // Buat atau reset sesi (biarkan siswa retry jika belum blokir)
+  students[email] = {
+    name,
+    email,
+    subject,
+    totalPoint: existing ? existing.totalPoint : 0,
+    blocked: false,
+    logs: existing ? existing.logs : [],
+    startedAt: new Date().toISOString(),
+  };
+
+  res.json({
+    blocked: false,
+    formUrl: subjects[subject].formUrl,
+  });
+});
+
+// POST /api/log
+// Catat pelanggaran dari browser siswa
+app.post("/api/log", (req, res) => {
+  const { email, violationId } = req.body;
+
+  if (!email || !violationId) {
+    return res.status(400).json({ error: "email dan violationId wajib." });
   }
 
-  if (!studentsDB[email]) {
-    studentsDB[email] = {
-      name, email, subject,
-      totalPoint: 0,
-      blocked: false,
-      logs: [],
-      startTime: new Date()
-    };
+  const student = getStudent(email);
+  if (!student) {
+    return res.status(404).json({ error: "Sesi siswa tidak ditemukan." });
+  }
+  if (student.blocked) {
+    return res.json({ blocked: true, totalPoint: student.totalPoint });
+  }
+
+  const v = violations[violationId];
+  if (!v) {
+    return res.status(400).json({ error: "Jenis pelanggaran tidak dikenal." });
+  }
+
+  // Catat log
+  student.logs.push({
+    violationId,
+    violationName: v.name,
+    point: v.point,
+    time: new Date().toISOString(),
+  });
+  student.totalPoint += v.point;
+
+  // Cek auto-blokir
+  if (student.totalPoint >= v.autoBlock) {
+    student.blocked = true;
   }
 
   res.json({
-    totalPoint: studentsDB[email].totalPoint,
-    blocked: studentsDB[email].blocked,
-    formUrl: subjectsDB[subject].formUrl
+    blocked: student.blocked,
+    totalPoint: student.totalPoint,
   });
 });
 
-// FIX: Log pake jenis pelanggaran
-app.post('/api/log', (req, res) => {
-  const { email, violationId } = req.body; // ganti switchCount jadi violationId
-  const violation = violationTypes[violationId];
+// GET /api/status?email=...
+// Polling status blokir dari browser siswa
+app.get("/api/status", (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: "email wajib." });
 
-  if (!studentsDB[email]) return res.status(404).json({ error: 'Siswa tidak ditemukan' });
-  if (!violation) return res.status(400).json({ error: 'Jenis pelanggaran tidak valid' });
+  const student = getStudent(email);
+  if (!student) return res.status(404).json({ error: "Tidak ditemukan." });
 
-  studentsDB[email].totalPoint += violation.point;
-  studentsDB[email].logs.push({
-    timestamp: new Date().toISOString(),
-    violationId,
-    violationName: violation.name,
-    point: violation.point,
-    totalPoint: studentsDB[email].totalPoint
-  });
-
-  // Auto blokir berdasarkan jenis pelanggaran
-  const countViolation = studentsDB[email].logs.filter(l => l.violationId === violationId).length;
-  if (countViolation >= violation.autoBlock) {
-    studentsDB[email].blocked = true;
-  }
-
-  return res.json({
-    success: true,
-    blocked: studentsDB[email].blocked,
-    totalPoint: studentsDB[email].totalPoint
+  res.json({
+    blocked: student.blocked,
+    totalPoint: student.totalPoint,
   });
 });
 
-app.get('/api/status', (req, res) => {
-  const email = req.query.email;
-  res.json({ blocked: studentsDB[email]?.blocked || false });
+/* ═══════════════════════════════════════════════
+   ADMIN ENDPOINTS  (semua butuh x-admin-password)
+═══════════════════════════════════════════════ */
+
+// GET /admin/subjects — semua mapel (termasuk yang belum punya formUrl)
+app.get("/admin/subjects", adminAuth, (req, res) => {
+  res.json(subjects);
 });
 
-// ADMIN: Siswa
-app.get('/admin/students', authAdmin, (req, res) => {
-  res.json(Object.values(studentsDB));
-});
-
-app.delete('/admin/student/:email', authAdmin, (req, res) => {
-  delete studentsDB[req.params.email];
-  res.json({ success: true });
-});
-
-// ADMIN: Mapel
-app.get('/admin/subjects', authAdmin, (req, res) => res.json(subjectsDB));
-
-app.post('/admin/subjects', authAdmin, (req, res) => {
+// POST /admin/subjects — tambah/edit mapel
+app.post("/admin/subjects", adminAuth, (req, res) => {
   const { id, name, formUrl } = req.body;
-  if (!id ||!name) return res.status(400).json({ error: 'ID dan Nama wajib' });
-  subjectsDB[id] = { name, formUrl: formUrl || "" };
-  res.json({ success: true });
+  if (!id || !name) return res.status(400).json({ error: "id dan name wajib." });
+
+  subjects[id] = { name, formUrl: formUrl || "" };
+  res.json({ ok: true });
 });
 
-// ADMIN: Jenis Pelanggaran
-app.get('/admin/violations', authAdmin, (req, res) => {
-  res.json(violationTypes);
+// DELETE /admin/subject/:id
+app.delete("/admin/subject/:id", adminAuth, (req, res) => {
+  const id = req.params.id;
+  if (!subjects[id]) return res.status(404).json({ error: "Mapel tidak ditemukan." });
+  delete subjects[id];
+  res.json({ ok: true });
 });
 
-app.post('/admin/violations', authAdmin, (req, res) => {
+// GET /admin/violations — semua jenis pelanggaran
+app.get("/admin/violations", adminAuth, (req, res) => {
+  res.json(violations);
+});
+
+// POST /admin/violations — tambah/edit pelanggaran
+app.post("/admin/violations", adminAuth, (req, res) => {
   const { id, name, point, autoBlock } = req.body;
-  if (!id ||!name) return res.status(400).json({ error: 'ID dan Nama wajib' });
-  violationTypes[id] = {
+  if (!id || !name) return res.status(400).json({ error: "id dan name wajib." });
+
+  violations[id] = {
     name,
-    point: parseInt(point) || 1,
-    autoBlock: parseInt(autoBlock) || 5
+    point:     parseInt(point)     || 0,
+    autoBlock: parseInt(autoBlock) || 0,
   };
-  res.json({ success: true });
+  res.json({ ok: true });
 });
 
-app.delete('/admin/violation/:id', authAdmin, (req, res) => {
-  delete violationTypes[req.params.id];
-  res.json({ success: true });
+// DELETE /admin/violation/:id
+app.delete("/admin/violation/:id", adminAuth, (req, res) => {
+  const id = req.params.id;
+  if (!violations[id]) return res.status(404).json({ error: "Pelanggaran tidak ditemukan." });
+  delete violations[id];
+  res.json({ ok: true });
 });
 
-app.listen(PORT, () => console.log(`Server jalan di ${PORT}`));
+// GET /admin/students — semua data siswa
+app.get("/admin/students", adminAuth, (req, res) => {
+  res.json(Object.values(students));
+});
+
+// POST /admin/student/:email/block — blokir siswa secara manual
+app.post("/admin/student/:email/block", adminAuth, (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  const student = getStudent(email);
+  if (!student) return res.status(404).json({ error: "Siswa tidak ditemukan." });
+
+  student.blocked = true;
+  res.json({ ok: true });
+});
+
+// DELETE /admin/student/:email — hapus data siswa
+app.delete("/admin/student/:email", adminAuth, (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  if (!students[email]) return res.status(404).json({ error: "Siswa tidak ditemukan." });
+  delete students[email];
+  res.json({ ok: true });
+});
+
+/* ═══════════════════════════════════════════════
+   HEALTH CHECK
+═══════════════════════════════════════════════ */
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    students: Object.keys(students).length,
+    subjects: Object.keys(subjects).length,
+    violations: Object.keys(violations).length,
+  });
+});
+
+/* ═══════════════════════════════════════════════
+   START
+═══════════════════════════════════════════════ */
+app.listen(PORT, () => {
+  console.log(`[server] Berjalan di port ${PORT}`);
+  console.log(`[server] Admin password: ${process.env.ADMIN_PASSWORD ? "dari env" : "admin123 (default)"}`);
+});
